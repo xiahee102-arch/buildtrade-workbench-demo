@@ -1,52 +1,446 @@
 'use strict';
-const $ = s => document.querySelector(s);
-const $$ = s => [...document.querySelectorAll(s)];
-const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money = n => n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-const navItems = [['today','⌂','今天'],['inquiries','▱','询盘'],['quote','▤','报价'],['orders','◇','订单'],['rfq','▧','招标与询价'],['marketing','◎','获客'],['agents','⌘','Agent 协作'],['data','▥','数据'],['products','▣','商品资料']];
-const initial = () => ({delivery:false,quoteApproved:false,quoteRevision:1,quoteSent:false,report:'',order:false,postApproved:false,postPublished:false,postLink:'',draft:false,scene:'quote',node:'human',range:'30',dataTab:'business',rfqFilter:'all',choices:{},leads:{},audit:[],imports:[],importedPosts:[],selectedOrder:'syed',orderFilter:'all',orderSearch:'',balanceReceived:false,shipped:false,completed:false,productionNote:'预计 12-05 完工，12-08 发货',customer:'syed',customerBack:'orders',customerNotes:{},channelsSplit:false});
-let state = initial();
-let page = 'today';
-let toastTimer;
-const scenes = {
- quote:{title:'询盘到报价，谁做到了哪一步',caption:'KL Build Supply · 询盘 #0187 · 3 项商品',specialist:'询盘 Agent',specialty:'提取数量、规格与目的港',tool:'程序报价',toolCaption:'固定规则算价 · 非 AI',handoff:'报价单待确认交期，认证问题单独转人工。',human:'老板审批',humanCaption:'价格交期 / 认证承诺',nodes:{manager:['外贸主管 Agent','拆分询盘任务，将需求提取与商品核对并行分派，汇总为报价审批。','输入：买家原话、商品资料；输出：分工与待办。'],fact:['商品资料 Agent','已匹配 304 不锈钢立柱、扶手管和玻璃夹；资料库中没有 SGS 报告。','交付：已确认规格 + 报告缺口，未知信息不进入承诺。'],specialist:['询盘 Agent','已整理数量 800 / 400 / 1,600，目的港 Port Klang。首次回复草稿追问表面处理和目标交期。','交付：需求摘要 + 回复草稿；演示不发送消息。'],tool:['程序报价 · 工具','逐项乘法与求和：5,120 + 4,600 + 2,960 = US$12,680.00。','依据：固定单价与数量；不是模型估算。'],human:['老板 · 人工关口','确认 35 天交期后批准报价。SGS 报告缺失需单独如实答复；批准不触发发送。','下一步：生成发送稿，由业务员在原平台人工发送。']}},
- rfq:{title:'招标逐项比对，把缺口交给人决定',caption:'扶手工程包招标文件.pdf · 42 条要求 · 模拟解析',specialist:'文件需求 Agent',specialty:'提取原文与逐条要求',tool:'要求比对工具',toolCaption:'事实映射 · 保留缺口',handoff:'31 项满足、6 项部分满足、5 项缺失。需人工选择处理方式。',human:'老板处理缺口',humanCaption:'资质 / 报告 / 规格承诺',nodes:{manager:['外贸主管 Agent','把文件需求提取与资料检索分派给两个专业 Agent，再汇总比对结果。','输出：42 条要求的核对摘要和人工待办。'],fact:['商品资料 Agent','读取商品的材质、尺寸与表面处理；未找到第三方报告和本地投标主体资质。','缺证据时保留“缺”，不能自动标为满足。'],specialist:['文件需求 Agent','从样例文字型 PDF 提取 42 条要求，当前表格展示其中 8 条。','这是模拟解析结果，不提供任意文件解析。'],tool:['要求比对工具','将要求与商品事实逐条对应，输出满足、部分满足和缺失；质保承诺另行确认。','不替代招标资格判断，不代表具备投标资质。'],human:['老板 · 缺口处理','选择外协、不响应、等待补证或寻找本地经销商后，生成内部响应草稿。','草稿不会自动提交投标，也不会触发对外发送。']}},
- marketing:{title:'一份可信内容，从商品事实开始',caption:'Facebook 企业主页 · 不锈钢楼梯立柱 · 英文',specialist:'营销内容 Agent',specialty:'按单平台格式生成草稿',tool:'内容事实检查',toolCaption:'排除未确认承诺',handoff:'内容检查完成，等待批准；发布由人完成，之后登记链接。',human:'老板发布审批',humanCaption:'批准草稿 / 人工发布',nodes:{manager:['外贸主管 Agent','确定本周单平台内容主题，安排资料与文案并行准备。','输出：Facebook 企业主页的一份英文草稿。'],fact:['商品资料 Agent','提供已确认的 304 材质、Ø50 × 900mm 尺寸和拉丝表面。','未引用 SGS 报告或未批准的价格、交期。'],specialist:['营销内容 Agent','围绕公寓项目生成英文文案，并附产品规格和联系询价引导。','输出：英文草稿；无社交平台连接或自动发布。'],tool:['内容事实检查 · 工具','核对材质与尺寸，确认没有未证实认证、价格和交期。','资料检查仅为内容提示，不是法律或准入审核。'],human:['老板 · 发布审批','批准后复制文案，自己去 Facebook 企业主页发布，再把链接登记回来。','批准与发布分开记录；此演示不会访问社交账户。']}}
-};
-const quoteRows = [{name:'立柱 · 304 不锈钢 Ø50×900mm',qty:800,price:6.4},{name:'扶手管 · 304 不锈钢 Ø42×3000mm',qty:400,price:11.5},{name:'玻璃夹 · 不锈钢',qty:1600,price:1.85}];
-const total = () => quoteRows.reduce((n,r) => n+r.qty*r.price,0);
-const rfqRows = [
- ['立柱材质为 304 不锈钢','304，壁厚 1.5mm','满足',null],['扶手管径 Ø42 至 Ø50','Ø42、Ø48、Ø50 均有','满足',null],['表面处理：拉丝 #4 或镜面','拉丝有；镜面需外协','部分满足',['接受外协','不响应此项']],['提供第三方材料检测报告','资料库里没有','缺',['等待补证','不响应此项']],['投标方须为马来西亚本地公司','暂无本地主体证明','缺',['找本地经销商','不响应']],['质保期不少于 2 年','资料库未确认质保承诺','需确认',['承诺待核实','不承诺']],['交货期不超过 45 天','常规 30～40 天，最终需批准','满足',null],['玻璃夹材质为 316 不锈钢','已确认玻璃夹为 304','缺',['核实 316 供货','不响应此项']]
-];
-const baselinePosts = [ ['不锈钢立柱 304 与 316，怎么选','10-28',5210,188,74,3],['公寓项目玻璃夹现货展示','10-22',4380,151,69,2],['从打样到发货：7 天流程','10-15',3120,98,39,1],['展会邀请：吉隆坡建材展','10-09',2640,84,33,2],['扶手管壁厚怎么测','10-02',1950,52,18,0],['其余内容汇总','—',1120,39,0,1] ];
-function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,4200)}
-function record(action,detail){state.audit.unshift({action,detail,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})})}
-function route(next){if(next!=='customer'&&!navItems.some(n=>n[0]===next))next='today';page=next;if(scenes[next])state.scene=next;location.hash=next;render();window.scrollTo(0,0)}
-function pending(){return [!state.order,!state.quoteApproved,!state.report,!state.draft,!state.postApproved].filter(Boolean).length}
-function badge(text,type=''){return `<span class="tag ${type}">${text}</span>`}
-function kpis(items){return `<div class="kpis">${items.map(([label,value,note])=>`<div class="kpi"><div class="label">${label}</div><b>${value}</b><small>${note}</small></div>`).join('')}</div>`}
-function flowHTML(scene){const s=scenes[scene];return `<section class="panel flow-panel" aria-label="Agent 协作流程"><div class="flow-head"><div class="row spread"><h2>${s.title}</h2>${badge('模拟协作')}</div><p>${s.caption}</p></div><div class="scene-tabs" aria-label="协作场景">${[['quote','询盘报价'],['rfq','招标核对'],['marketing','内容获客']].map(([id,label])=>`<button data-scene="${id}" class="${scene===id?'active':''}" aria-pressed="${scene===id}">${label}</button>`).join('')}</div><div class="flow"><svg viewBox="0 0 500 348" preserveAspectRatio="none" aria-hidden="true"><path d="M250 98 V115 H126 V133 M250 115 H374 V133 M126 220 V249 M374 220 V234 H126 M215 292 H285"/><path class="wire" d="M215 292 H285"/></svg>${nodeHTML('manager','⌘','外贸主管 Agent','分派任务 · 协调交接','已完成分派')}${nodeHTML('fact','▣','商品资料 Agent','只引用已确认事实','事实已共享')}${nodeHTML('specialist','◈',s.specialist,s.specialty,'已提交结果')}${nodeHTML('tool','⊞',s.tool,s.toolCaption,'工具产出已就绪')}${nodeHTML('human','♙',s.human,s.humanCaption,sceneStatus(scene))}</div><div class="inspector" aria-live="polite">${inspectorHTML(scene)}</div><div class="flow-foot"><span class="indicator"></span>绿线表示交接路径 · 工具和人工节点单独标识 · 所有执行均为模拟</div></section>`}
-function sceneStatus(scene){return (scene==='quote'?state.quoteApproved:scene==='rfq'?state.draft:state.postApproved)?'✓ 本次关口已处理':'● 等你拍板'}
-function nodeHTML(id,icon,label,sub,status){return `<button class="flow-node ${id} ${state.node===id?'selected':''}" data-node="${id}" aria-pressed="${state.node===id}"><span class="node-label"><span class="node-icon">${icon}</span>${label}</span><small>${sub}</small><div class="state">${status}</div></button>`}
-function inspectorHTML(scene){const s=scenes[scene],n=s.nodes[state.node];return `<div class="row spread"><strong>${n[0]}</strong><a class="subtle-link" href="#${scene==='quote'?'quote':scene==='rfq'?'rfq':'marketing'}">去处理 →</a></div><p>${n[1]}</p><span class="small muted">${n[2]}</span>`}
-function inlineFlow(){return `<details class="inline-flow"><summary>⌘ Agent 协作流程 · ${scenes[state.scene].handoff}</summary>${flowHTML(state.scene)}</details>`}
-function today(){const tasks=[['订单','Ahmad Hardware 已确认报价 v3','买家已确认 · 等老板确认同一版本','确认订单','orders',state.order],['报价','KL Build Supply · US$12,680.00','程序算价已完成 · 交期需确认','批准报价','quote',state.quoteApproved],['要你回答','买家问有没有 SGS 检测报告','资料库没有 · AI 未代作承诺','去回答','quote',!!state.report],['招标文件','扶手工程包：42 条要求，5 项缺失','逐项处理缺口后生成内部草稿','逐条查看','rfq',state.draft],['发布','本周主页帖子：不锈钢楼梯立柱','内容检查通过 · 等你批准','批准发布','marketing',state.postApproved]];return `<section class="banner"><div><h2>早上好，李总</h2><p>${pending()} 件事等你拍板。团队已经整理好资料，你只需做决定。</p></div><button data-action="start">开始处理 →</button></section><div class="grid"><div class="stack"><section><div class="section-title"><h2>等你拍板</h2><small>按紧急程度排列</small></div><div class="task-list">${tasks.map((t,i)=>`<div class="task ${i===2||i===3?'warning':''} ${t[5]?'complete':''}"><span class="number">${i+1}</span>${badge(t[0],i===2||i===3?'warn':'')}<div class="task-info"><strong>${t[1]}</strong><small>${t[5]?'✓ 已处理 · 可查看记录':t[2]}</small></div><button class="${i===2||i===3?'amber':'primary'}" data-route="${t[4]}">${t[5]?'查看':t[3]} ›</button></div>`).join('')}</div></section><section class="panel"><div class="section-title"><h2>AI 已整理的新询盘</h2><a href="#inquiries" class="subtle-link">查看全部 →</a></div><table><tbody><tr><td><b>KL Build Supply</b></td><td class="muted">立柱、扶手管、玻璃夹</td><td>${badge(state.quoteApproved?'报价已批准':'报价待批')}</td></tr><tr><td><b>Ahmad Hardware</b></td><td class="muted">玻璃夹 · 马来西亚</td><td>${badge(state.order?'双方已确认':'买家已确认')}</td></tr><tr><td><b>Tan & Sons Trading</b></td><td class="muted">数量和目的港缺失</td><td>${badge('回复草稿已备')}</td></tr></tbody></table></section></div><div class="stack">${flowHTML(state.scene)}<section class="panel"><h2>本次操作记录</h2>${auditHTML()}</section></div></div>`}
-function auditHTML(){return state.audit.length?state.audit.slice(0,5).map(a=>`<div class="activity-line"><time>${a.time}</time><div><b>${esc(a.action)}</b><br><span>${esc(a.detail)}</span></div></div>`).join(''):'<div class="activity-line"><time>09:12</time><div>询盘 Agent 已生成首次回复草稿<br><span>追问表面处理与目标交期，未报价</span></div></div><div class="activity-line"><time>09:41</time><div>营销 Agent 已提交英文内容<br><span>经事实核对，等待人工批准</span></div></div><div class="activity-line"><time>10:05</time><div>文件需求 Agent 已整理样例要求<br><span>42 条要求，5 项资料缺失</span></div></div>'}
-function inquiries(){return `${inlineFlow('quote')}<section class="panel"><div class="section-title"><h2>询盘收件箱</h2>${badge('3 条模拟询盘')}</div><p class="muted">MVP 由人工粘贴询盘；这里展示整理后的样例，未连接邮箱或 WhatsApp。</p><table><thead><tr><th>买家</th><th>需求 / 来源</th><th>状态</th><th></th></tr></thead><tbody><tr><td><b>KL Build Supply</b><br><span class="muted small">马来西亚 · #0187</span></td><td>立柱 800 / 扶手管 400 / 玻璃夹 1,600<br><span class="muted small">平台询盘 · 人工标注</span></td><td>${badge('报价待处理','warn')}</td><td><button class="primary" data-route="quote">查看报价</button></td></tr><tr><td><b>Ahmad Hardware</b></td><td>玻璃夹 · 报价 v3</td><td>${badge('买家已确认')}</td><td><button data-route="orders">查看订单</button></td></tr><tr><td><b>Tan & Sons Trading</b></td><td>扶手配件 · 数量与目的港未提供</td><td>${badge('需追问')}</td><td><button data-action="inquiry-draft">查看追问草稿</button></td></tr></tbody></table><div id="inquiry-draft"></div></section>`}
-function quote(){return `<div class="stepper"><span class="done">✓ 收到询盘</span><span class="done">✓ 需求整理</span><span class="done">✓ 程序报价</span><span class="current">${state.quoteApproved?'已批准':'等你批准'}</span><span>人工发送</span><span>双方确认</span></div>${inlineFlow('quote')}<div class="grid"><section class="panel"><div class="section-title"><h2>KL Build Supply</h2>${badge('询盘 #0187')}</div><p class="muted small">马来西亚 · 吉隆坡 · 平台询盘</p><div class="quote-text"><span class="muted small">买家原话</span><br>Need stainless steel balustrade posts, handrail tube and glass clamps for a condo project. 800 posts 900mm, 400 handrail 3m, 1600 glass clamps. Do you have SGS test report? Price to Port Klang?</div><h3>AI 整理的需求</h3><dl><dt>产品</dt><dd>立柱、扶手管、玻璃夹，共 3 项</dd><dt>目的港</dt><dd>Port Klang</dd><dt>项目</dt><dd>公寓楼项目</dd><dt>待人工回答</dt><dd>检测报告与交期</dd></dl><p class="muted small">首次回复草稿 · 未发送</p><div class="quote-text reply">Thank you for your inquiry. Could you confirm the finish (brushed or mirror) and your target delivery date? We are preparing a quotation for your 3 items.</div><div class="notice"><b>买家问有没有 SGS 检测报告</b><br>资料库没有这份报告，AI 没有代你回答。${state.report?`<p>已记录：${esc(state.report)}</p>`:`<div class="row" style="margin-top:9px"><button data-action="report-no">没有，如实告知买家</button><button data-action="report-later">稍后补充证明</button></div>`}</div></section><section class="panel"><div class="section-title"><h2>报价单 v${state.quoteRevision}</h2>${badge('FOB 上海 · 美元')}</div><div class="table-scroll"><table class="numeric"><thead><tr><th>品名</th><th>数量</th><th>单价</th><th>小计</th></tr></thead><tbody>${quoteRows.map(r=>`<tr><td>${r.name}</td><td>${r.qty.toLocaleString()}</td><td>${money(r.price)}</td><td>${money(r.qty*r.price)}</td></tr>`).join('')}</tbody></table></div><div class="total"><span>合计</span><span>US$${money(total())}</span></div><p class="check">✓ 价格由程序计算，未使用 AI 估价<br>✓ 毛利率 18.4%，高于示例底线 15%</p><div class="notice"><div class="row spread"><span>交期 35 天为系统建议，需要你确认</span><button data-action="delivery" class="${state.delivery?'':'amber'}" ${state.quoteApproved?'disabled':''}>${state.delivery?'✓ 已确认 35 天':'确认 35 天'}</button></div>报价不含海运费；发送稿将提示买家另询货代。</div><dl><dt>成本</dt><dd>US$10,346.88</dd><dt>毛利</dt><dd>US$2,333.12</dd><dt>审批状态</dt><dd>${state.quoteApproved?'已批准，发送稿已生成':'等待老板批准'}</dd></dl>${state.quoteApproved?'<div class="quote-text reply"><b>发送稿 · 未发送</b><br>Our FOB Shanghai quotation totals USD 12,680.00. Lead time: 35 days. Ocean freight is excluded. No SGS certification is promised in this quotation.</div>':''}</section></div><div class="approval-bar"><div><span class="small muted">报价合计</span><br><strong>US$${money(total())}</strong></div><span class="small muted">批准生成草稿，仍需在原平台人工发送。</span><div class="row"><button data-action="quote-return">退回重算</button><button class="primary" data-action="quote-approve" ${!state.delivery||state.quoteApproved?'disabled':''}>${state.quoteApproved?'✓ 已批准并生成发送稿':'批准并生成发送稿'}</button></div></div>${!state.delivery?'<p class="small muted">先确认交期，再批准报价。</p>':''}`}
-function orders(){return ordersPage()}
-function rfq(){const chosen=Object.keys(state.choices).length;const visible=rfqRows.map((r,i)=>({r,i})).filter(({r})=>state.rfqFilter==='all'||r[3]);return `${inlineFlow('rfq')}<div class="grid" style="grid-template-columns:minmax(0,2fr) minmax(270px,1fr)"><div><section class="panel"><div class="section-title"><h2>▧ 扶手工程包招标文件.pdf</h2>${badge('模拟解析')}</div><p class="muted small">42 条要求 · 当前展示 8 条代表性样例，5 条待你选择。</p></section><div class="rfq-stats"><div class="panel"><span class="small muted">满足</span><b>31</b></div><div class="panel"><span class="small muted">部分满足</span><b style="color:var(--amber)">6</b></div><div class="panel"><span class="small muted">缺失</span><b style="color:var(--red)">5</b></div></div><section class="panel"><div class="segmented"><button data-filter="all" class="${state.rfqFilter==='all'?'selected':''}">样例 8 条</button><button data-filter="gaps" class="${state.rfqFilter==='gaps'?'selected':''}">需处理 5 条</button></div><div class="table-scroll"><table class="rfq-table"><thead><tr><th>招标要求</th><th>我们的资料</th><th>结论</th><th>你的选择</th></tr></thead><tbody>${visible.map(({r,i})=>`<tr><td>${r[0]}</td><td class="muted">${r[1]}</td><td>${badge(r[2],r[2]==='满足'?'':r[2]==='缺'?'red':'warn')}</td><td>${r[3]?`<div class="choice-buttons">${r[3].map(c=>`<button data-choice="${i}" data-value="${c}" class="${state.choices[i]===c?'chosen':''}" aria-pressed="${state.choices[i]===c}">${c}</button>`).join('')}</div>`:'—'}</td></tr>`).join('')}</tbody></table></div></section></div><div class="stack"><section class="panel notice"><h2>可以准备响应，先处理缺口</h2><p>本地资质、检测报告和 316 供货尚无证据。可以选择寻找经销商、等待补证或不响应相关条款。</p><p class="small muted">AI 只做资料对照，不替你判断投标资格。</p></section><section class="panel"><h2>你的进度</h2><progress max="5" value="${chosen}" aria-label="RFQ 待办处理进度"></progress><p>${chosen} / 5 条样例待办已选择</p><p class="muted small">选择不会自动补齐证据，也不会把“缺失”改成“满足”。</p><button class="primary" data-action="rfq-draft" ${chosen!==5?'disabled':''}>按选择生成响应草稿</button>${state.draft?`<div class="quote-text"><b>内部响应草稿 · 未发送</b>${Object.entries(state.choices).map(([i,c])=>`<p>${esc(rfqRows[i][0])}：${esc(c)}${/核实|补证|经销商/.test(c)?'，证据待补充，不作已满足承诺':''}。</p>`).join('')}</div>`:''}</section></div></div>`}
-const postText='Stainless steel balustrade posts, ready for Malaysian projects. 304 stainless steel, Ø50 × 900mm, brushed finish. Message us with your project requirements for specifications and a quotation.';
-function marketing(){return `${inlineFlow('marketing')}<div class="grid"><section class="panel"><div class="section-title"><h2>${state.postApproved?'已批准的发布草稿':'等你批准的发布'}</h2>${badge('关口 · 对外发布','warn')}</div><div class="post-card"><div class="product-art" aria-label="立柱产品示意"><i></i></div><div><span class="small muted">Facebook 企业主页 · 英文</span><p><b>Stainless steel balustrade posts</b></p><p>${postText}</p></div></div><p class="check">✓ 材质、尺寸与已确认商品资料一致<br>✓ 没有未确认的认证和承诺<br>✓ 没有价格和交期承诺</p><div class="row" style="margin-top:22px"><button class="primary" data-action="post-approve" ${state.postApproved?'disabled':''}>${state.postApproved?'✓ 已批准':'批准，我去主页发布'}</button><button data-action="post-revise">退回修改</button></div><p class="small muted">批准后提供文案，由你在企业主页人工发布；平台不会代发。</p>${state.postApproved?`<div class="quote-text"><button data-action="copy-post">复制英文文案</button><p class="small muted">人工发布后，将链接登记在这里。</p><form id="publish-form"><label class="small" for="post-url">Facebook 帖子链接</label><input class="fake-input" id="post-url" type="url" required placeholder="https://www.facebook.com/..." value="${esc(state.postLink)}"><button class="primary" type="submit">登记人工发布</button></form>${state.postPublished?'<p class="check">✓ 已登记链接 · 未核验平台发布状态</p>':''}</div>`:''}</section><div class="stack"><section class="panel"><div class="section-title"><h2>本周线索</h2>${badge('人工提供的示例资料')}</div>${['吉隆坡某住宅项目','槟城某商业楼翻新','2027 年 3 月 · 吉隆坡建材展'].map((name,i)=>`<div class="lead"><div class="row spread"><strong>${name}</strong>${badge(state.leads[i]||'待处理')}</div><p>${i===0?'阶段：主体完工，准备装修 · 建议联系承包商':i===1?'阶段：设计招标 · 需求：楼梯和扶手栏杆':'展会示例 · 去不去由你决定'}</p><div class="row"><button data-lead="${i}" data-value="已忽略">忽略</button><button class="primary" data-lead="${i}" data-value="已加入跟进">加入跟进</button></div></div>`).join('')}</section><section class="panel"><h2>人工决定，Agent 协助</h2><p class="muted">不群发、不抓私域群成员、不操作个人社交账号。价格、认证、对外发布与订单确认均保留人工关口。</p></section></div></div>`}
-const periods={'7':{inquiries:15,quotes:6,buyers:2,records:1,weeks:[[15,6]],labels:['11/02–11/07']},'30':{inquiries:48,quotes:21,buyers:5,records:2,weeks:[[9,4],[11,5],[13,6],[15,6]],labels:['10/12–18','10/19–25','10/26–11/01','11/02–07']},quarter:{inquiries:126,quotes:54,buyers:13,records:5,weeks:[[38,16],[40,17],[48,21]],labels:['第 1 月','第 2 月','第 3 月']}};
-function dataPage(){return `<div class="toolbar"><div class="segmented data-tabs"><button data-data-tab="business" class="${state.dataTab==='business'?'selected':''}">业务数据</button><button data-data-tab="social" class="${state.dataTab==='social'?'selected':''}">社交平台</button></div><span class="small muted">全部为示例数据，不表示真实业务</span></div>${state.dataTab==='social'?social():business()}`}
-function business(){const d=periods[state.range];return `<div class="toolbar"><div class="segmented">${[['7','近 7 天'],['30','近 30 天'],['quarter','本季度']].map(([id,label])=>`<button data-range="${id}" class="${state.range===id?'selected':''}">${label}</button>`).join('')}</div><button data-action="export-business">↓ 导出 CSV</button></div>${kpis([['新询盘',d.inquiries,'平台记录 · 模拟'],['平均首次回复','3 分钟','按示例已发送记录统计'],['发出报价',d.quotes,'已发出的示例报价'],['成交记录',d.records,'模拟成交记录 · 不含收款']])}<div class="grid"><section class="panel"><h2>从询盘到成交记录</h2>${[['收到询盘',d.inquiries],['已首次回复',d.inquiries],['发出报价',d.quotes],['买家确认',d.buyers],['成交记录',d.records]].map(([name,n])=>`<div class="bar-row"><span>${name}</span><div class="bar-bg"><i style="width:${n/d.inquiries*100}%"></i></div><b>${n}</b></div>`).join('')}<p class="small muted">全部柱条以询盘数为基数。成交记录需买家与老板确认，不代表收款。</p></section><section class="panel"><div class="section-title"><h2>询盘与报价</h2><small>深绿：询盘 / 浅绿：报价</small></div><div class="chart">${d.weeks.map(([n,q],i)=>`<div class="chart-week"><i style="height:${n/Math.max(...d.weeks.map(w=>w[0]))*85}%"><b>${n}</b></i><i class="light" style="height:${q/Math.max(...d.weeks.map(w=>w[0]))*85}%"><b>${q}</b></i><small>${d.labels[i]}</small></div>`).join('')}</div><p class="small muted">图表与上方指标使用同一组示例记录。</p></section><section class="panel"><h2>询盘来源 · ${state.range==='30'?'近 30 天':'当前区间'}</h2>${['平台询盘','Facebook 企业主页','落地页表单','WhatsApp 买家先开口','展会 / 经销商'].map((n,i)=>{const portions=[.4375,.1875,.1458,.125,.1042];const counts=portions.map(p=>Math.floor(p*d.inquiries));counts[0]+=d.inquiries-counts.reduce((a,b)=>a+b,0);return `<div class="bar-row"><span>${n}</span><div class="bar-bg"><i style="width:${counts[i]/d.inquiries*100}%"></i></div><b>${counts[i]}</b></div>`}).join('')}<p class="small muted">来源由人工标注或表单记录；不宣称精确归因。</p></section><section class="panel"><h2>从数据里看到的</h2><div class="activity-line"><span>11 条示例询盘问到检测报告，资料库没有。</span><button data-route="products">去补资料</button></div><div class="activity-line"><span>报价到买家确认，示例平均 3.2 天。</span></div><div class="activity-line"><span>目的港缺失的询盘，Agent 已准备追问草稿。</span></div></section></div>`}
-function social(){const posts=state.importedPosts.length?state.importedPosts:baselinePosts;const sums=[2,3,4,5].map(i=>posts.reduce((n,p)=>n+Number(p[i]),0));return `<div class="toolbar"><div class="segmented"><button class="selected" disabled>✓ Facebook 企业主页</button><button disabled>LinkedIn · 后续支持</button><button disabled>Instagram · 后续支持</button></div><button data-action="template">↓ CSV 模板</button></div><div class="notice" style="margin-bottom:16px"><div class="row spread"><span>数据来自${state.importedPosts.length?'本次 CSV 导入':'模拟手动导入样例'}，尚未连接官方 API。<br>CSV 字段：title,date,reach,interactions,clicks,inquiries；数据只保留当前会话。</span><label>导入 CSV <input id="csv-import" type="file" accept=".csv,text/csv"></label></div></div>${kpis([['触达',sums[0].toLocaleString(),'各帖触达相加 · 非去重人数'],['互动',sums[1].toLocaleString(),'点赞、评论、分享'],['链接点击',sums[2].toLocaleString(),'导入数据'],['带来询盘',sums[3],'人工归因 / 示例']])}<div class="grid" style="grid-template-columns:minmax(0,2fr) minmax(260px,1fr)"><section class="panel"><h2>每条帖子带来了什么</h2><div class="table-scroll"><table><thead><tr><th>帖子</th><th>日期</th><th>触达</th><th>互动</th><th>点击</th><th>询盘</th></tr></thead><tbody>${posts.map(p=>`<tr><td><b>${esc(p[0])}</b></td>${p.slice(1).map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div><h3 style="margin-top:24px">导入记录</h3>${state.imports.length?state.imports.map(n=>`<div class="audit">${esc(n)}</div>`).join(''):'<p class="muted small">11-05 15:20 · facebook_posts_oct.csv · 示例记录</p>'}</section><div class="stack"><section class="panel"><h2>待你批准的帖子</h2><p>本周主页帖子：不锈钢楼梯立柱</p>${badge(state.postApproved?'已批准，等待人工发布':'草稿待批准','warn')}<p class="small muted">批准不触发平台发布。</p><button class="primary" data-route="marketing">查看发布草稿</button></section><section class="panel"><h2>接下来的内容计划</h2><div class="activity-line"><time>11-08</time><span>不锈钢立柱</span></div><div class="activity-line"><time>11-12</time><span>展会物料预告</span></div><div class="activity-line"><time>11-19</time><span>公寓项目案例</span></div></section></div></div>`}
-function products(){return `<section class="panel" style="margin-bottom:18px"><h2>已确认的事实，才进入对外草稿</h2><p class="muted">商品资料是询盘、报价、招标与营销 Agent 的共享依据。原型只展示事实快照，不提供真实资料存储。</p></section><div class="facts-grid">${quoteRows.map((r,i)=>`<section class="panel product-fact"><div class="product-art" style="width:100%;height:130px;margin-bottom:18px"><i></i></div><h3>${r.name}</h3>${badge('商品事实已确认')}<dl><dt>材质</dt><dd>304 不锈钢</dd><dt>表面处理</dt><dd>拉丝</dd><dt>规格依据</dt><dd>示例工厂商品资料 v1</dd><dt>认证报告</dt><dd>${badge('SGS 未提供','warn')}</dd><dt>示例单价</dt><dd>US$${money(r.price)}</dd></dl><p class="small muted">单价供程序计算，最终价格和交期仍需老板批准。</p></section>`).join('')}</div>`}
-function render(){$('#nav').innerHTML=navItems.map(([id,icon,label])=>`<a href="#${id}" ${id===page?'class="active" aria-current="page"':''}><span class="icon">${icon}</span>${label}${id==='today'&&pending()?`<span class="count">${pending()}</span>`:''}</a>`).join('');$('#page-title').textContent=(page==='customer'?'客户档案':navItems.find(n=>n[0]===page)[2])+({quote:' · 等你批准',rfq:' · 逐条对照',marketing:' · 找新买家',agents:' · 看见分工与交接'}[page]||'');const pages={today,inquiries,quote,orders,customer,rfq,marketing,agents:()=>`<div class="grid"><div>${flowHTML(state.scene)}</div><div class="stack"><section class="panel"><h2>当前交接</h2><p>${scenes[state.scene].handoff}</p><div class="notice">${sceneStatus(state.scene)}。所有对外动作仍需人工处理。</div></section><section class="panel"><h2>操作与交付记录</h2>${auditHTML()}</section></div></div>`,data:dataPage,products};$('#main').innerHTML=pages[page]();bind();bindOrderViews()}
-function bind(){$$('[data-route]').forEach(b=>b.onclick=()=>{if(page==='today'&&b.dataset.route==='orders')state.selectedOrder='ahmad';route(b.dataset.route)});$$('[data-scene]').forEach(b=>b.onclick=()=>{state.scene=b.dataset.scene;state.node='human';const open=$('details.inline-flow')?.open;render();if(open)$('details.inline-flow').open=true});$$('[data-node]').forEach(b=>b.onclick=()=>{state.node=b.dataset.node;const container=b.closest('.flow-panel');container.querySelectorAll('[data-node]').forEach(n=>{n.classList.toggle('selected',n.dataset.node===state.node);n.setAttribute('aria-pressed',n.dataset.node===state.node)});container.querySelector('.inspector').innerHTML=inspectorHTML(state.scene)});$$('[data-action]').forEach(b=>b.onclick=()=>action(b.dataset.action));$$('[data-choice]').forEach(b=>b.onclick=()=>{state.choices[b.dataset.choice]=b.dataset.value;state.draft=false;render()});$$('[data-filter]').forEach(b=>b.onclick=()=>{state.rfqFilter=b.dataset.filter;render()});$$('[data-range]').forEach(b=>b.onclick=()=>{state.range=b.dataset.range;render()});$$('[data-data-tab]').forEach(b=>b.onclick=()=>{state.dataTab=b.dataset.dataTab;render()});$$('[data-lead]').forEach(b=>b.onclick=()=>{state.leads[b.dataset.lead]=b.dataset.value;record('线索处理',b.dataset.value);render()});if($('#publish-form'))$('#publish-form').onsubmit=e=>{e.preventDefault();let url;try{url=new URL($('#post-url').value);if(url.protocol!=='https:'||!['facebook.com','www.facebook.com','m.facebook.com','fb.watch'].includes(url.hostname)||url.pathname==='/')throw Error()}catch{toast('请输入有效的 HTTPS Facebook 帖子链接。');return}state.postLink=url.href;state.postPublished=true;record('登记人工发布','保存链接，未核验平台发布状态');render();toast('已登记链接；本原型未连接平台核验。')};if($('#csv-import'))$('#csv-import').onchange=importCSV}
-async function action(name){if(name==='start'){if(!state.order)state.selectedOrder='ahmad';route(!state.order?'orders':!state.quoteApproved||!state.report?'quote':!state.draft?'rfq':'marketing');return}if(name==='delivery'){state.delivery=!state.delivery;record('交期确认',state.delivery?'确认建议交期 35 天':'取消交期确认')}if(name==='quote-approve'){if(!state.delivery)return;state.quoteApproved=true;record('报价批准',`KL Build Supply / v${state.quoteRevision} / US$12,680.00 / 35 天，生成发送稿但未发送`);toast('报价已批准，发送稿已生成；未发送给买家。')}if(name==='quote-return'){state.quoteApproved=false;state.delivery=false;state.quoteRevision++;record('退回报价',`保留示例单价，重新生成 v${state.quoteRevision} 并重置交期审批`);toast('已退回并建立新版本，需重新确认交期。')}if(name==='report-no'){state.report='暂无 SGS 报告，告知买家，不作认证承诺';record('认证问题处理',state.report);toast('已记录如实答复，未发送。')}if(name==='report-later'){record('认证问题暂缓','等待补证，继续保留未确认状态');toast('已记为等待补证，尚未完成此待办。')}if(name==='order-confirm'){state.order=true;record('模拟订单双方确认','Ahmad Hardware：买家 v3 / 老板 v3 / US$8,430；不代表收款');toast('已记录双方确认 v3，模拟订单不代表收款。')}if(name==='rfq-draft'){if(Object.keys(state.choices).length!==5)return;state.draft=true;record('RFQ 内部草稿', '按 5 条样例选择生成，缺失证据保持未确认');toast('内部响应草稿已生成，未提交或发送。')}if(name==='post-approve'){state.postApproved=true;record('批准内容草稿','Facebook 英文内容已批准，等待人工发布');toast('草稿已批准，请手动去 Facebook 发布。')}if(name==='post-revise'){state.postApproved=false;state.postPublished=false;state.postLink='';record('内容退回修改','撤销当前草稿审批，等待重新审核');toast('已退回，重新批准后才能登记发布。')}if(name==='copy-post'){try{await navigator.clipboard.writeText(postText);toast('英文文案已复制。')}catch{toast('浏览器不允许复制，请手动选取页面中的英文文案。')}return}if(name==='inquiry-draft'){$('#inquiry-draft').innerHTML='<div class="quote-text reply"><b>追问草稿 · 未发送</b><br>Thank you for your inquiry. Could you confirm the required quantities and destination port?</div>';return}if(name==='export-business'){const d=periods[state.range];download('business-demo.csv',`metric,value\ninquiries,${d.inquiries}\nquotes,${d.quotes}\nbuyer_confirmations,${d.buyers}\nsimulated_deal_records,${d.records}\n`);toast('已导出当前区间示例数据。');return}if(name==='template'){download('facebook-import-template.csv','title,date,reach,interactions,clicks,inquiries\n不锈钢立柱,2026-11-07,1200,32,8,1\n');return}render()}
-function download(name,content){const blob=new Blob(['\uFEFF'+content],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),500)}
-function parseCSV(text){const rows=[];let row=[],value='',quoted=false;const input=text.replace(/^\uFEFF/,'').replace(/\r\n/g,'\n');for(let i=0;i<input.length;i++){const c=input[i];if(c==='"'){if(quoted&&input[i+1]==='"'){value+='"';i++}else if(!quoted&&value!=='')throw Error('CSV 引号格式错误');else quoted=!quoted}else if(c===','&&!quoted){row.push(value);value=''}else if(c==='\n'&&!quoted){row.push(value);if(row.some(v=>v.trim()))rows.push(row);row=[];value=''}else value+=c}if(quoted)throw Error('CSV 引号未闭合');row.push(value);if(row.some(v=>v.trim()))rows.push(row);return rows}
-async function importCSV(e){const file=e.target.files[0];if(!file)return;if(file.size>1024*1024){toast('CSV 请控制在 1 MB 以内。');e.target.value='';return}try{const rows=parseCSV(await file.text());if(rows[0]?.map(s=>s.trim()).join(',')!=='title,date,reach,interactions,clicks,inquiries')throw Error('表头应为 title,date,reach,interactions,clicks,inquiries');const posts=rows.slice(1);if(!posts.length||posts.length>500)throw Error('请输入 1～500 行数据');for(const r of posts){if(r.length!==6||!r[0].trim()||!r[1].trim()||r.slice(2).some(v=>!/^\d+$/.test(v.trim())||!Number.isSafeInteger(Number(v))))throw Error('每行需 6 列，标题日期不能为空，指标须为非负整数')}for(let i=2;i<6;i++){if(!Number.isSafeInteger(posts.reduce((n,r)=>n+Number(r[i]),0)))throw Error('指标合计超出支持范围')}state.importedPosts=posts.map(r=>[r[0],r[1],...r.slice(2).map(Number)]);state.imports.unshift(`${file.name} · ${posts.length} 行 · 本次会话导入成功`);record('导入 Facebook CSV',`${posts.length} 行；不涉及 API 连接`);render();toast('数据已导入并更新指标；刷新后重置。')}catch(err){toast(err.message);e.target.value=''}}
-$('#reset').onclick=()=>{state=initial();render();toast('演示已重置，所有修改仅保留在页面会话中。')};window.addEventListener('hashchange',()=>{const next=location.hash.slice(1);if(next!==page){page=(next==='customer'||navItems.some(n=>n[0]===next))?next:'today';if(scenes[page])state.scene=page;render()}});page=(location.hash.slice(1)==='customer'||navItems.some(n=>n[0]===location.hash.slice(1)))?location.hash.slice(1):'today';if(scenes[page])state.scene=page;render();
+
+const $ = selector => document.querySelector(selector);
+const $$ = selector => [...document.querySelectorAll(selector)];
+const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const tag = (text, type = '') => `<span class="tag ${type}">${text}</span>`;
+const money = n => Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const validPage = p => p === 'home' || p === 'chat' || Object.hasOwn(META, p);
+let state = loadState();
+let ui = {page: validPage(location.hash.slice(1)) ? location.hash.slice(1) : 'home', homeSpace: 'acquire', customerSearch: '', chatSearch: '', chatFilter: 'all', chatRoomOpen: false, agentOpen: false};
+let toastTimer, modalHandler, storageFailed = false;
+const currentProduct = () => state.products.find(p => p.id === state.productId) || state.products[0];
+const currentCustomer = () => state.customers.find(c => c.id === state.customerId) || state.customers[0];
+const currentOrder = () => state.orders.find(o => o.id === state.selectedOrder) || state.orders[0];
+const quoteTotal = () => Math.round(state.products.reduce((sum, p, i) => sum + p.price * state.quote.quantities[i], 0) * 100) / 100;
+const space = () => ui.page === 'home' ? ui.homeSpace : NAV.trade.some(n => n[0] === ui.page) ? 'trade' : 'acquire';
+const timeNow = () => new Intl.DateTimeFormat('zh-CN', {timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit'}).format(new Date());
+function formatDate(value) { return value ? h(value.replace('T', ' ').replace(/^2026-/, '')) : '未安排'; }
+
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); storageFailed = false; }
+  catch { if (!storageFailed) toast('浏览器存储不可用，当前修改仅保留在本次会话。'); storageFailed = true; }
+}
+function toast(text) {
+  $('#toast').textContent = text;
+  $('#toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 4500);
+}
+function audit(action, detail, change = null) {
+  state.audit.unshift({id: ++state.sequence, action, detail, time: timeNow(), change, undone: false});
+  state.audit = state.audit.slice(0, 150);
+}
+function message(page, role, text) {
+  state.messages[page] ||= [];
+  state.messages[page].push({role, text});
+  state.messages[page] = state.messages[page].slice(-65);
+}
+function render() {
+  const view = {market: marketView, product: productView, design: designView, publish: publishView, customers: customersView, quotes: quotesView, orders: ordersView};
+  const body = ui.page === 'home' ? homeView() : ui.page === 'chat' ? chatView() : `<div class="workspace">${sidebar()}<main class="work">${view[ui.page]()}<div class="work-note">本地演示 · 可保存前端数据；非真实模型、市场研究或业务记录。</div></main>${agentView()}</div><div class="mobile-scrim ${ui.agentOpen ? 'show' : ''}" data-action="close-agent"></div><button class="mobile-agent-toggle" data-action="open-agent">✧ ${META[ui.page][2]}</button>`;
+  $('#app').innerHTML = header() + body;
+  document.title = (ui.page === 'home' ? '获客与交易' : ui.page === 'chat' ? '聊天' : META[ui.page][0]) + ' · 外贸助手';
+  const agent = $('#agent-messages');
+  if (agent) agent.scrollTop = agent.scrollHeight;
+  const chat = $('#chat-content');
+  if (chat) chat.scrollTop = chat.scrollHeight;
+}
+function route(page) {
+  if (!validPage(page)) page = 'home';
+  ui.page = page;
+  ui.agentOpen = false;
+  ui.chatRoomOpen = false;
+  if (page !== 'home') ui.homeSpace = space();
+  location.hash = page;
+  render();
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', () => {
+  const target = location.hash.slice(1);
+  if (target !== ui.page) route(validPage(target) ? target : 'home');
+});
+
+function openModal(title, description, fields, handler, label = '保存') {
+  modalHandler = handler;
+  $('#dialog-body').innerHTML = `<div class="dialog-head"><h2>${h(title)}</h2><p>${h(description)}</p></div><form id="modal-form" class="dialog-body">${fields}<div class="dialog-actions"><button type="button" data-action="close-dialog">取消</button><button class="primary" type="submit">${h(label)}</button></div></form>`;
+  $('#dialog').showModal();
+  $('#dialog').querySelector('input,textarea,select,button')?.focus();
+}
+function field(label, name, value = '', type = 'text', extra = '') {
+  return `<label class="field">${h(label)}<input name="${name}" type="${type}" value="${h(value)}" ${extra}></label>`;
+}
+function textarea(label, name, value = '', extra = '') {
+  return `<label class="field">${h(label)}<textarea name="${name}" ${extra}>${h(value)}</textarea></label>`;
+}
+function commit() { save(); render(); }
+function invalidateDraft(productId) {
+  if (state.draft.productId === productId) state.draft.approvedVersion = null;
+}
+function updateDraft(title, body) {
+  const p = state.products.find(x => x.id === state.draft.productId) || currentProduct();
+  const before = structuredClone(state.draft);
+  state.draft = {...state.draft, title, body, version: state.draft.version + 1, productVersion: p.version, approvedVersion: null};
+  audit('更新内容版本', `内容 v${state.draft.version}；旧发布审批失效`, {kind: 'draft', before, expectedVersion: state.draft.version});
+}
+function reviseQuote() {
+  state.quote.version++;
+  state.quote.deliveryConfirmed = false;
+  state.quote.approvedVersion = null;
+  state.quote.buyerVersion = null;
+  audit('报价版本更新', `报价 v${state.quote.version}，重置交期、老板批准与买家确认`);
+}
+function recordCustomer(c, patch, actor = '人工') {
+  const before = structuredClone(c);
+  Object.assign(c, patch, {version: c.version + 1});
+  audit(actor + '修改客户', `${c.name} / v${c.version} / ${Object.keys(patch).join('、')}`, {kind: 'customer', id: c.id, before, expectedVersion: c.version});
+}
+function draftBody(p) {
+  return `${p.name.includes('玻璃夹') ? 'Stainless steel glass clamps' : p.name.includes('扶手管') ? 'Stainless steel handrail tubes' : 'Stainless steel balustrade posts'} for apartment projects. ${p.material === '304 不锈钢' ? '304 stainless steel.' : 'Please contact us for the confirmed material specifications.'} ${p.finish === '拉丝' ? 'Brushed finish.' : 'Contact us for the confirmed surface finish.'} Contact us with your required quantities and destination port for specifications and a quotation.`;
+}
+
+// Every simulated Agent mutation is scoped, version-checked and recorded.
+function propose(page, op, summary) {
+  if (state.scopes[page] === 'suggest') {
+    state.pending[page] = {...op, summary};
+    message(page, 'system', '仅建议模式：已生成待确认修改，尚未写入左侧面板。');
+  } else applyOperation(page, op);
+}
+function applyOperation(page, op) {
+  if (op.kind === 'product-position') {
+    const p = state.products.find(x => x.id === op.id);
+    if (!p || p.version !== op.version) throw Error('产品版本已变化，请重新提出修改。');
+    const before = structuredClone(p);
+    p.positioning = op.text; p.version++;
+    invalidateDraft(p.id);
+    audit('Agent 修改产品定位', `${p.id} / v${p.version}；未改商品事实`, {kind: 'product', id: p.id, before, expectedVersion: p.version});
+    message(page, 'receipt', `已更新左侧「目标应用与定位」。\n${p.positioning}\n分析 v${p.version}，商品材质与认证保持原值。`);
+  } else if (op.kind === 'customer') {
+    const c = state.customers.find(x => x.id === op.id);
+    if (!c || c.version !== op.version) throw Error('客户资料版本已变化，请重新提出修改。');
+    recordCustomer(c, op.patch, 'Agent');
+    message(page, 'receipt', `已修改 ${c.name} 的 ${Object.keys(op.patch).map(k => ({tag: '意向标签', followup: '跟进时间', note: '备注', need: '需求摘要', port: '目的港'}[k])).join('、')}。\n客户版本 v${c.version}；可在操作记录中撤销。`);
+  } else if (op.kind === 'draft') {
+    if (state.draft.version !== op.version) throw Error('内容版本已变化，请重新生成。');
+    updateDraft(op.title, op.body);
+    message(page, 'receipt', `已生成英文内容 v${state.draft.version} 并更新左侧编辑器。\n演示稿不含价格、交期和认证承诺，需人工复核。`);
+  } else if (op.kind === 'market') {
+    if (state.market.version !== op.version) throw Error('市场分析已变化，请重新生成。');
+    state.market.report = op.report; state.market.version++;
+    audit('Agent 整理市场框架', `市场分析 v${state.market.version}；未联网研究`);
+    message(page, 'receipt', '已整理左侧验证框架，结果仍标为假设；没有获取实时市场数据。');
+  } else if (op.kind === 'production') {
+    const o = state.orders.find(x => x.id === op.id);
+    if (!o || o.note !== op.before || o.completed) throw Error('订单状态已变化，请重新确认。');
+    o.note = op.text;
+    audit('Agent 更新生产备注', `${o.id} / ${op.text}`);
+    message(page, 'receipt', `已更新订单 ${o.id} 的生产备注。未修改收款、发货或完成状态。`);
+  } else throw Error('此操作不在允许范围内。');
+}
+
+function handoff(from, to, text) {
+  message(from, 'relay', `${META[from][2]} → ${META[to][2]}\n${text}\n对方已收到本地交接记录。`);
+  message(to, 'relay', `${META[from][2]} → ${META[to][2]}\n${text}`);
+  audit('Agent 间交接', `${META[from][2]} → ${META[to][2]}`);
+}
+function productHandoff() {
+  const p = currentProduct();
+  state.draft.productId = p.id;
+  state.draft.approvedVersion = null;
+  handoff('product', 'design', `产品 ${p.id} / 分析 v${p.version}\n定位：${p.positioning}\n卖点：${p.advantages}\n只交接资料，不自动覆盖已有内容。`);
+}
+function serviceSummary() {
+  // The seed conversation is explicitly tied to C-0187; it never overwrites another customer.
+  const c = state.customers.find(x => x.id === 'C-0187');
+  if (!c) throw Error('未找到与示例会话关联的客户。');
+  const text = '立柱 800 · 扶手管 400 · 玻璃夹 1,600';
+  propose('customers', {kind: 'customer', id: c.id, version: c.version, patch: {need: text, port: 'Port Klang'}}, '将关联客服摘要写入 KL Build Supply 的需求与目的港。');
+  const awaiting = state.scopes.customers === 'suggest';
+  message('customers', 'relay', '客服 Agent → 客户管理 Agent\n已收到 KL Build Supply 的示例对话摘要：' + text + '；目的港 Port Klang。\n' + (awaiting ? '当前为仅建议模式，尚未写入，等待确认。' : '已按授权写入客户档案。') + '\nSGS 报告问题保留为待人工确认，未添加认证承诺。');
+  const service = state.chats.find(x => x.id === 'service');
+  service.messages.push({who: 'agent', name: '客服 Agent', text: '已向客户管理 Agent 发送 KL Build Supply 的结构化需求摘要。' + (awaiting ? '等待你确认后写入档案。' : '客户档案已更新。') + '没有对外发送消息。', time: timeNow()});
+  audit('客服 Agent 同步需求', '客户 C-0187 / 来源：预置示例会话；未调用模型');
+}
+
+function runAgent(page, text) {
+  message(page, 'user', text);
+  if (/认证|证书|最低价|取消审批|自动签|自动报价/.test(text)) {
+    message(page, 'agent', '该请求涉及认证、价格或业务承诺，需要人工核实。演示 Agent 不能跳过审批，也不能自行补造商品事实。');
+    return;
+  }
+  if (page === 'product' && /设计|交接/.test(text)) productHandoff();
+  else if (page === 'product' && /定位/.test(text)) {
+    const p = currentProduct();
+    const target = text.split(/改为|改成|修改为/)[1]?.trim().slice(0, 500) || '面向马来西亚公寓项目承包商，突出标准规格、配套选型与安装场景。';
+    propose(page, {kind: 'product-position', id: p.id, version: p.version, text: target}, `修改 ${p.name} 的定位：${target}`);
+  } else if (page === 'market' && /产品|交接/.test(text)) {
+    handoff('market', 'product', `目标市场：${state.market.country}\n客户：${state.market.buyer}\n产品方向：${state.market.focus}\n研究判断为待验证假设，未写入商品事实。`);
+  } else if (page === 'market' && /整理|分析|研究/.test(text)) {
+    const m = state.market;
+    const report = `市场：${m.country}；目标客户：${m.buyer}；产品：${m.focus}。\n\n验证步骤：\n1. 收集已授权来源和买家实际询问，确认项目与规格需求。\n2. 使用清晰的规格与安装内容测试询盘意向。\n3. 记录有效询盘、目的港与数量，观察后再调整方向。\n\n这是演示研究框架，未检索实时市场信息。`;
+    propose(page, {kind: 'market', version: m.version, report}, '替换当前市场分析为结构化验证框架。');
+  } else if (page === 'design' && /发布|交接/.test(text)) {
+    handoff('design', 'publish', `内容 v${state.draft.version}：${state.draft.title}\n提交人工发布审批，不执行自动发布。`);
+  } else if (page === 'design' && /生成|改写|英文/.test(text)) {
+    const p = state.products.find(x => x.id === state.draft.productId) || currentProduct();
+    propose(page, {kind: 'draft', version: state.draft.version, title: p.name + ' · 项目选型介绍', body: draftBody(p)}, '根据已确认产品资料生成英文演示稿，并建立新版本。');
+  } else if (page === 'customers' && /客服|摘要/.test(text)) {
+    if (currentCustomer().id !== 'C-0187') message(page, 'agent', '当前客户暂无关联的示例客服摘要。请选择 KL Build Supply 后使用此演示。');
+    else serviceSummary();
+  } else if (page === 'customers' && /高意向/.test(text)) {
+    const c = currentCustomer();
+    propose(page, {kind: 'customer', id: c.id, version: c.version, patch: {tag: '高意向'}}, `将 ${c.name} 标记为高意向。`);
+  } else if (page === 'customers' && /跟进/.test(text)) {
+    const c = currentCustomer(), followup = /15|下午/.test(text) ? '2026-11-08T15:00' : '2026-11-08T10:00';
+    propose(page, {kind: 'customer', id: c.id, version: c.version, patch: {followup}}, `修改 ${c.name} 的演示跟进时间为 ${followup.replace('T', ' ')}；不会创建系统提醒。`);
+  } else if (page === 'customers' && /备注[：:]/.test(text)) {
+    const c = currentCustomer(), note = text.split(/备注[：:]/).slice(1).join('：').trim().slice(0, 500);
+    propose(page, {kind: 'customer', id: c.id, version: c.version, patch: {note}}, '修改当前客户备注。');
+  } else if (page === 'orders' && /生产进度[：:]/.test(text)) {
+    const o = currentOrder(), content = text.split(/生产进度[：:]/)[1]?.trim().slice(0, 200);
+    if (!content) message(page, 'agent', '请用“记录生产进度：…”描述要记录的内容。');
+    else propose(page, {kind: 'production', id: o.id, before: o.note, text: content}, `将订单 ${o.id} 的生产备注修改为：${content}`);
+  } else if (page === 'quotes') {
+    message(page, 'agent', `当前报价 v${state.quote.version}，程序总额 US$${money(quoteTotal())}；建议交期 ${state.quote.delivery} 天。\n${state.quote.deliveryConfirmed ? '交期已由人确认。' : '交期尚未由人确认。'}数量可在左侧修改，正式报价需要逐版批准。`);
+  } else if (page === 'publish') {
+    const p = state.products.find(x => x.id === state.draft.productId);
+    message(page, 'agent', `当前内容 v${state.draft.version}。${state.draft.approvedVersion === state.draft.version ? '本版已获人工批准。' : '等待人工批准。'}\n${state.draft.productVersion === p?.version ? '引用产品分析版本一致。' : '商品或分析版本变化，请回内容设计保存新版本并复核。'}\n演示不会自动检查任意文案的事实，也不会连接社交平台。`);
+  } else message(page, 'agent', '这是受控前端演示，尚未连接真实模型。请使用下方示例指令，或直接在左侧编辑表单；自由指令不会被伪装成已执行。');
+}
+
+function undoChange(id) {
+  const entry = state.audit.find(x => x.id === id), change = entry?.change;
+  if (!change || entry.undone) throw Error('该记录不可撤销或已撤销。');
+  if (change.kind === 'customer' || change.kind === 'product') {
+    const list = change.kind === 'customer' ? state.customers : state.products;
+    const entity = list.find(x => x.id === change.id);
+    if (entity?.version !== change.expectedVersion) throw Error('此记录之后已有新修改，不能覆盖后续版本。');
+    Object.assign(entity, change.before, {version: entity.version + 1});
+    if (change.kind === 'product') invalidateDraft(entity.id);
+  } else if (change.kind === 'draft') {
+    if (state.draft.version !== change.expectedVersion) throw Error('内容已有后续版本，不能直接撤销。');
+    const version = state.draft.version + 1;
+    state.draft = {...change.before, version, approvedVersion: null};
+  }
+  entry.undone = true;
+  audit('撤销修改', entry.action + '；创建恢复版本，原记录保留');
+}
+
+function action(name) {
+  const q = state.quote;
+  if (name === 'open-agent' || name === 'close-agent') { ui.agentOpen = name === 'open-agent'; render(); return; }
+  if (name === 'close-dialog') { $('#dialog').close(); return; }
+  if (name === 'upload') { $('#agent-file')?.click(); return; }
+  if (name === 'market-handoff') { runAgent('market', '交给产品分析 Agent'); commit(); toast('已记录交接，可前往产品分析查看。'); return; }
+  if (name === 'product-handoff') { productHandoff(); commit(); toast('已交给设计 Agent，现有内容未自动覆盖。'); return; }
+  if (name === 'design-handoff') { handoff('design', 'publish', `内容 v${state.draft.version} / ${state.draft.title}；等待人工批准。`); commit(); route('publish'); return; }
+  if (name === 'edit-facts') {
+    const p = currentProduct(), baseVersion = p.version;
+    openModal('人工确认产品事实', '只有人工确认的规格才可进入对外内容，修改将使原发布审批失效。', field('材质', 'material', p.material, 'text', 'required maxlength="80"') + field('规格', 'spec', p.spec, 'text', 'required maxlength="150"') + field('表面处理', 'finish', p.finish, 'text', 'required maxlength="80"'), f => {
+      if (p.version !== baseVersion) throw Error('产品已变化，请重新打开编辑。');
+      const before = structuredClone(p);
+      Object.assign(p, {material: f.get('material').trim(), spec: f.get('spec').trim(), finish: f.get('finish').trim(), version: p.version + 1});
+      invalidateDraft(p.id); audit('人工修改商品事实', `${p.id} / v${p.version}`, {kind: 'product', id: p.id, before, expectedVersion: p.version});
+    }); return;
+  }
+  if (name === 'publish-approve') {
+    const d = state.draft, p = state.products.find(x => x.id === d.productId);
+    if (d.productVersion !== p?.version) throw Error('引用的产品版本已变化，请回内容设计保存并复核。');
+    d.approvedVersion = d.version; audit('人工批准内容', `内容 v${d.version}；未自动发布`); message('publish', 'receipt', `内容 v${d.version} 已由人批准。请在企业主页人工发布后登记链接。`); commit(); return;
+  }
+  if (name === 'copy-draft') {
+    navigator.clipboard?.writeText(state.draft.body).then(() => toast('文案已复制。')).catch(() => toast('复制权限不可用，请手动选择文案。')); return;
+  }
+  if (name === 'add-customer' || name === 'edit-customer') {
+    const edit = name === 'edit-customer', c = edit ? currentCustomer() : {name: '', person: '', country: '马来西亚', port: '', type: '项目客户', tag: '待了解', followup: '', need: '', note: ''};
+    const baseVersion = c.version;
+    openModal(edit ? '编辑客户资料' : '新增客户', '示例资料仅保存在当前浏览器，不会联系客户。', field('公司名', 'name', c.name, 'text', 'required maxlength="100"') + field('联系人', 'person', c.person, 'text', 'required maxlength="80"') + field('国家 / 地区', 'country', c.country, 'text', 'required maxlength="80"') + field('目的港', 'port', c.port, 'text', 'maxlength="100"') + field('意向标签', 'tag', c.tag, 'text', 'required maxlength="30"') + field('下次跟进', 'followup', c.followup, 'datetime-local') + textarea('需求', 'need', c.need, 'maxlength="1000"') + textarea('备注', 'note', c.note, 'maxlength="1000"'), f => {
+      const patch = Object.fromEntries(['name', 'person', 'country', 'port', 'tag', 'followup', 'need', 'note'].map(key => [key, f.get(key).trim()]));
+      if (edit) { if (c.version !== baseVersion) throw Error('客户资料已变化，请重新编辑。'); recordCustomer(c, patch); }
+      else { const customer = {...patch, id: 'C-' + (++state.sequence), type: '项目客户', version: 1}; state.customers.push(customer); state.customerId = customer.id; audit('新增示例客户', customer.name); }
+    }); return;
+  }
+  if (name === 'customer-summary') {
+    if (currentCustomer().id !== 'C-0187') throw Error('当前只有 KL Build Supply 有关联的示例对话，不能把其他客户的需求写入此客户。');
+    serviceSummary(); commit(); toast('已同步客服摘要，客户记录可查看。'); return;
+  }
+  if (name === 'customer-chat') {
+    const ids = {'C-0187': 'kl', 'C-0012': 'syed'}, c = currentCustomer();
+    state.chatId = ids[c.id] || 'local-' + c.id;
+    if (!state.chats.some(x => x.id === state.chatId)) state.chats.push({id: state.chatId, type: 'person', name: c.person + ' · ' + c.name, subtitle: '单人会话 · 本地模拟', unread: 0, messages: []});
+    save(); route('chat'); ui.chatRoomOpen = true; render(); return;
+  }
+  if (name === 'confirm-delivery') { q.deliveryConfirmed = true; audit('人工确认交期', `${q.id} / v${q.version} / ${q.delivery} 天`); commit(); return; }
+  if (name === 'approve-quote') {
+    if (!q.deliveryConfirmed) throw Error('请先确认交期。');
+    q.approvedVersion = q.version; audit('人工批准报价', `v${q.version} / US$${money(quoteTotal())} / ${q.delivery} 天`); message('quotes', 'receipt', `报价 v${q.version} 已批准，发送稿已在左侧生成，未执行对外发送。`); commit(); return;
+  }
+  if (name === 'buyer-confirm') {
+    if (q.approvedVersion !== q.version) throw Error('当前报价版本未批准。');
+    q.buyerVersion = q.version; audit('模拟记录买家确认', `报价 v${q.version}，不代表真实买家操作`); commit(); return;
+  }
+  if (name === 'create-order') {
+    if (q.buyerVersion !== q.version || q.approvedVersion !== q.version) throw Error('买家与老板须确认同一报价版本。');
+    const key = q.id + '-v' + q.version;
+    const prior = state.orders.find(o => o.source === key);
+    if (prior) { state.selectedOrder = prior.id; save(); route('orders'); toast('该版本已建立订单，未重复创建。'); return; }
+    const order = {id: 'SO-' + (++state.sequence), source: key, customerId: q.customerId, quoteVersion: q.version, total: quoteTotal(), deposit: 0, balanceRecorded: false, shipped: false, completed: false, bill: '', shipDate: '', note: '双方已模拟确认，等待生产安排。'};
+    state.orders.push(order); state.selectedOrder = order.id; audit('老板确认并建立模拟订单', `${order.id} / ${key}；未收款`); save(); route('orders'); return;
+  }
+  if (name === 'export-quote') {
+    const rows = [['item', 'quantity', 'unit_price', 'subtotal'], ...state.products.map((p, i) => [p.name, q.quantities[i], p.price, (p.price * q.quantities[i]).toFixed(2)]), ['total_USD', '', '', quoteTotal().toFixed(2)], ['quote_version', q.version, '', '']];
+    const csv = rows.map(r => r.map(v => '"' + String(v).replaceAll('"', '""') + '"').join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], {type: 'text/csv;charset=utf-8'}));
+    const a = document.createElement('a'); a.href = url; a.download = `quote-v${q.version}-demo.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); return;
+  }
+  if (name === 'production-note') {
+    const o = currentOrder(), oldNote = o.note;
+    openModal('记录生产进度', '仅记录备注，不代表工厂真实状态核验。', textarea('进度说明', 'note', o.note, 'required maxlength="500"'), f => { if (o.note !== oldNote) throw Error('备注已变化，请重试。'); o.note = f.get('note').trim(); audit('人工记录生产进度', `${o.id} / ${o.note}`); }); return;
+  }
+  if (name === 'record-balance') {
+    const o = currentOrder();
+    if (o.balanceRecorded) return;
+    openModal('记录平台外尾款', '本操作不收款、不核验到账，只记录用户确认的结果。', `<div class="notice">待记收 US$${money(o.total - o.deposit)}</div><label class="row small" style="margin-top:18px"><input style="width:auto" type="checkbox" name="confirmed" required>我已在平台外核对到账（演示）</label>`, f => {
+      if (!f.has('confirmed')) throw Error('需核对到账后才能记录。'); o.balanceRecorded = true; audit('人工记收平台外尾款', `${o.id} / US$${money(o.total - o.deposit)}，未经平台核验`);
+    }, '确认记录'); return;
+  }
+  if (name === 'ship-order') {
+    const o = currentOrder();
+    if (!o.balanceRecorded || o.shipped) throw Error('需先记录尾款，已发货的订单不能重复登记。');
+    openModal('登记发货', '确认已实际发货后填写；此处为模拟记录。', field('发货日期', 'date', '', 'date', 'required') + field('提单号', 'bill', '', 'text', 'required maxlength="100"'), f => { o.shipped = true; o.shipDate = f.get('date'); o.bill = f.get('bill').trim(); audit('人工登记发货', `${o.id} / ${o.shipDate} / ${o.bill}`); }); return;
+  }
+  if (name === 'complete-order') {
+    const o = currentOrder();
+    if (!o.shipped || !o.balanceRecorded || o.completed) throw Error('需先核对尾款并登记发货。');
+    openModal('确认收货并完成', '需要人工确认买家已收货。', '<label class="row small"><input type="checkbox" name="received" required style="width:auto">已确认买家收货（演示）</label>', f => { if (!f.has('received')) throw Error('请确认收货。'); o.completed = true; audit('模拟订单完成', o.id + ' / 人工确认收货'); }, '确认完成'); return;
+  }
+  if (name === 'order-customer') { state.customerId = currentOrder().customerId; save(); route('customers'); return; }
+  if (name === 'apply-pending') {
+    const op = state.pending[ui.page];
+    if (!op) return;
+    applyOperation(ui.page, op); delete state.pending[ui.page]; commit(); return;
+  }
+  if (name === 'cancel-pending') { delete state.pending[ui.page]; message(ui.page, 'system', '已取消待确认修改，左侧未写入。'); commit(); return; }
+  if (name === 'chat-back') { ui.chatRoomOpen = false; render(); return; }
+  if (name === 'chat-summary') {
+    const c = state.chats.find(x => x.id === state.chatId);
+    if (!['service', 'kl', 'project'].includes(c.id)) { toast('此会话暂无结构化需求，演示不会编造摘要。'); return; }
+    serviceSummary();
+    if (c.id !== 'service') c.messages.push({who: 'agent', name: '客服 Agent', text: '已提取预置示例中的数量与目的港，内部同步给客户管理 Agent。没有向外部发送消息。', time: timeNow()});
+    commit(); toast('需求已内部交接，可在客户管理查看。'); return;
+  }
+  if (name === 'history') { showHistory(); return; }
+  if (name === 'settings') {
+    openModal('演示设置', '数据仅保存在当前浏览器；访客之间不共享。没有后台、真实模型或渠道连接。', '<p class="small muted">Agent 的“可编辑”与“仅建议”可在各栏目对话框上方切换。对外发布、价格、订单和收款始终要求人工操作。</p><div class="section-gap"><button type="button" class="danger" data-action="reset">重置全部演示数据</button></div>', () => {}, '完成'); return;
+  }
+  if (name === 'reset') { state = freshState(); ui.customerSearch = ''; ui.chatSearch = ''; ui.chatRoomOpen = false; $('#dialog').close(); commit(); toast('演示数据已重置。'); }
+}
+
+function showHistory() {
+  modalHandler = null;
+  $('#dialog-body').innerHTML = `<div class="dialog-head"><div class="row spread"><h2>操作与交接记录</h2><button data-action="close-dialog">关闭</button></div><p>所有事件为本地演示；撤销受版本检查保护。</p></div><div class="dialog-body">${state.audit.length ? state.audit.slice(0, 60).map(e => `<div class="history-entry"><strong>${h(e.action)}</strong>${h(e.detail)}<br><small>${h(e.time)} / #${e.id}${e.undone ? ' / 已撤销' : ''}</small>${e.change && !e.undone ? `<p><button data-undo="${e.id}">撤销此修改</button></p>` : ''}</div>`).join('') : '<p class="small muted">还没有操作记录。修改资料或执行交接后会显示在这里。</p>'}</div>`;
+  if (!$('#dialog').open) $('#dialog').showModal();
+}
+
+function handleForm(form) {
+  const f = new FormData(form), kind = form.dataset.form;
+  if (form.id === 'modal-form') {
+    modalHandler?.(f); $('#dialog').close(); commit(); toast('已保存本地演示记录。'); return;
+  }
+  if (kind === 'market') {
+    for (const key of ['country', 'buyer', 'focus', 'report']) state.market[key] = f.get(key).trim();
+    state.market.version++; audit('人工保存市场方向', `市场分析 v${state.market.version}，仍为待验证假设`);
+  } else if (kind === 'product') {
+    const p = currentProduct(), before = structuredClone(p);
+    p.positioning = f.get('positioning').trim(); p.advantages = f.get('advantages').trim(); p.version++;
+    invalidateDraft(p.id); audit('人工保存产品分析', `${p.id} / v${p.version}`, {kind: 'product', id: p.id, before, expectedVersion: p.version});
+  } else if (kind === 'draft') {
+    updateDraft(f.get('title').trim(), f.get('body').trim());
+  } else if (kind === 'publication') {
+    const d = state.draft;
+    if (d.approvedVersion !== d.version) throw Error('内容变更后需要重新批准。');
+    let url;
+    try { url = new URL(f.get('url')); } catch { throw Error('请输入有效链接。'); }
+    if (url.protocol !== 'https:' || !['facebook.com', 'www.facebook.com', 'm.facebook.com', 'fb.watch'].includes(url.hostname) || url.pathname === '/') throw Error('请输入 HTTPS Facebook 帖子链接。');
+    d.publication = {url: url.href, version: d.version, time: timeNow()};
+    audit('登记人工发布', `内容 v${d.version} / ${url.href} / 未核验平台状态`);
+  } else if (kind === 'agent') {
+    const text = f.get('message').trim(); if (!text) return;
+    runAgent(ui.page, text);
+  } else if (kind === 'chat') {
+    const text = f.get('message').trim(); if (!text) return;
+    const c = state.chats.find(x => x.id === state.chatId);
+    c.messages.push({who: 'self', name: '李总', text, time: timeNow()});
+    if (c.type === 'agent') {
+      if (/摘要|同步|客户/.test(text)) serviceSummary();
+      else c.messages.push({who: 'agent', name: '客服 Agent', text: /SGS|认证|价格|报价/.test(text) ? '这涉及认证或价格承诺，需要人工核实。可以先记录待办；我不会自行承诺。' : '这是本地规则演示，未连接真实模型。可以试试“同步客户需求”，把预置示例的摘要交给客户管理 Agent。', time: timeNow()});
+    }
+    c.messages = c.messages.slice(-150);
+    audit('保存本地消息', c.name + '；没有对外发送'); ui.chatRoomOpen = true;
+  }
+  commit();
+}
+
+document.addEventListener('click', event => {
+  const target = event.target.closest('button,a,tr[data-select-customer],[data-action]');
+  if (!target || target.disabled) return;
+  try {
+    if (target.dataset.action) { event.preventDefault(); action(target.dataset.action); }
+    else if (target.dataset.space) {
+      const key = target.dataset.space;
+      if (ui.page === 'home') { ui.homeSpace = key; render(); }
+      else route(key === 'acquire' ? 'market' : 'customers');
+    } else if (target.dataset.product) { state.productId = target.dataset.product; commit(); }
+    else if (target.dataset.selectCustomer) { state.customerId = target.dataset.selectCustomer; commit(); }
+    else if (target.dataset.order) { state.selectedOrder = target.dataset.order; commit(); }
+    else if (target.dataset.example) { runAgent(ui.page, target.dataset.example); commit(); }
+    else if (target.dataset.chatFilter) { ui.chatFilter = target.dataset.chatFilter; render(); }
+    else if (target.dataset.chat) { state.chatId = target.dataset.chat; state.chats.find(x => x.id === state.chatId).unread = 0; ui.chatRoomOpen = true; commit(); }
+    else if (target.dataset.undo) { undoChange(Number(target.dataset.undo)); save(); render(); showHistory(); toast('修改已撤销，已建立新的恢复版本。'); }
+  } catch (err) { toast(err.message); }
+});
+document.addEventListener('submit', event => {
+  event.preventDefault();
+  try {
+    const required = [...event.target.querySelectorAll('[required]')].filter(el => ['text', 'textarea', 'url'].includes(el.type));
+    if (required.some(el => !el.value.trim())) throw Error('必填内容不能只包含空格。');
+    handleForm(event.target);
+  } catch (err) { toast(err.message); }
+});
+document.addEventListener('change', event => {
+  const el = event.target;
+  try {
+    if (el.id === 'agent-scope') { state.scopes[ui.page] = el.value; audit('修改 Agent 操作范围', META[ui.page][0] + ' / ' + (el.value === 'edit' ? '可编辑' : '仅建议')); save(); }
+    else if (el.dataset.quantity !== undefined) {
+      const value = Number(el.value);
+      if (!Number.isInteger(value) || value < 1 || value > 1000000) { render(); throw Error('数量须为 1～1,000,000 的整数。'); }
+      if (state.quote.quantities[Number(el.dataset.quantity)] !== value) { state.quote.quantities[Number(el.dataset.quantity)] = value; reviseQuote(); commit(); }
+    } else if (el.id === 'delivery-days') {
+      const days = Number(el.value);
+      if (!Number.isInteger(days) || days < 1 || days > 365) { render(); throw Error('交期须为 1～365 天。'); }
+      if (days !== state.quote.delivery) { state.quote.delivery = days; reviseQuote(); commit(); }
+    } else if (el.id === 'quote-customer') { state.quote.customerId = el.value; reviseQuote(); commit(); }
+    else if (el.id === 'agent-file' || el.id === 'chat-file') {
+      const file = el.files[0]; if (!file) return;
+      if (file.size > 20 * 1024 * 1024) { el.value = ''; throw Error('演示附件大小请控制在 20 MB 以内。'); }
+      if (el.id === 'agent-file') {
+        state.files.push({page: ui.page, name: file.name, note: '仅记录文件名，未上传或解析'});
+        message(ui.page, 'system', `已记录附件名称：${file.name}。正文未读取、未上传、未用于生成分析。`);
+      } else state.chats.find(x => x.id === state.chatId).messages.push({who: 'self', name: '李总', text: `附件记录：${file.name}\n（仅文件名，未上传或发送）`, time: timeNow()});
+      audit('记录附件名称', file.name + '；未读取正文'); commit();
+    }
+  } catch (err) { toast(err.message); }
+});
+document.addEventListener('input', event => {
+  const el = event.target;
+  if (!['customer-search', 'chat-search'].includes(el.id)) return;
+  const position = el.selectionStart, id = el.id;
+  if (id === 'customer-search') ui.customerSearch = el.value; else ui.chatSearch = el.value;
+  render(); $( '#' + id).focus(); $( '#' + id).setSelectionRange(position, position);
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && event.target.matches('tr[data-select-customer]')) { event.preventDefault(); state.customerId = event.target.dataset.selectCustomer; commit(); }
+  if (event.key === 'Escape' && ui.agentOpen) { ui.agentOpen = false; render(); }
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.target.matches('[data-form="chat"] textarea')) { event.preventDefault(); event.target.closest('form').requestSubmit(); }
+});
+render();
