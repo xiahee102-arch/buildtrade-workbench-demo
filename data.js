@@ -23,6 +23,8 @@ const freshState = () => ({
     {id: 'HY-304-03', name: '不锈钢玻璃夹', material: '304 不锈钢', spec: '适配 8–12 mm 玻璃', finish: '拉丝', price: 1.85, positioning: '面向玻璃栏杆项目的固定配件选型。', advantages: '可与现有立柱系列配套，规格清晰。', version: 1}
   ],
   productId: 'HY-304-01',
+  designProductId: 'HY-304-01',
+  publicationHistory: [],
   draft: {title: '不锈钢立柱的项目选型指南', body: 'Stainless steel balustrade posts for your next apartment project. 304 stainless steel, Ø50 × 900 mm, brushed finish. Contact us with your required quantities and destination port for specifications and a quotation.', version: 1, productId: 'HY-304-01', productVersion: 1, approvedVersion: null, publication: null},
   customers: [
     {id: 'C-0187', name: 'KL Build Supply', person: 'Alex Tan', country: '马来西亚', type: '项目客户', tag: '高意向', port: 'Port Klang', followup: '2026-11-08T10:00', need: '立柱 800 · 扶手管 400 · 玻璃夹 1,600', note: '客户问及 SGS 报告，尚未提供证明。', version: 1},
@@ -49,7 +51,27 @@ const freshState = () => ({
 function loadState() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (parsed?.schema === 5 && Array.isArray(parsed.customers) && parsed.products?.length && parsed.messages && parsed.quote && parsed.chats?.length) return parsed;
+    const validRows = (rows, check) => Array.isArray(rows) && rows.length > 0 && rows.every(check);
+    const versioned = x => x && typeof x.id === 'string' && Number.isInteger(x.version) && x.version > 0;
+    if (parsed?.schema === 5 && validRows(parsed.customers, versioned) &&
+        validRows(parsed.products, p => versioned(p) && typeof p.name === 'string' && Number.isFinite(p.price) && p.price >= 0) &&
+        validRows(parsed.orders, o => o && typeof o.id === 'string' && Number.isFinite(o.total)) &&
+        validRows(parsed.chats, c => c && typeof c.id === 'string' && typeof c.name === 'string' && Array.isArray(c.messages)) &&
+        parsed.quote && Number.isInteger(parsed.quote.version) && Array.isArray(parsed.quote.quantities) &&
+        parsed.quote.quantities.length === parsed.products.length && parsed.quote.quantities.every(q => Number.isInteger(q) && q > 0 && q <= 1000000) &&
+        parsed.draft && typeof parsed.draft.body === 'string' && Number.isInteger(parsed.draft.version) &&
+        parsed.market && typeof parsed.market.report === 'string' && Number.isInteger(parsed.market.version) &&
+        parsed.messages && typeof parsed.messages === 'object' && parsed.scopes && typeof parsed.scopes === 'object' &&
+        Array.isArray(parsed.audit) && Array.isArray(parsed.files) && parsed.pending && Number.isInteger(parsed.sequence)) {
+      for (const page of Object.keys(META)) {
+        if (!Array.isArray(parsed.messages[page])) parsed.messages[page] = [];
+        if (!['edit', 'suggest'].includes(parsed.scopes[page])) parsed.scopes[page] = 'suggest';
+      }
+      parsed.designProductId ||= parsed.draft.productId;
+      parsed.publicationHistory = Array.isArray(parsed.publicationHistory) ? parsed.publicationHistory : [];
+      if (parsed.draft.publication && !parsed.publicationHistory.some(x => x.version === parsed.draft.publication.version)) parsed.publicationHistory.push(parsed.draft.publication);
+      return parsed;
+    }
   } catch {}
   return freshState();
 }

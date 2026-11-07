@@ -16,6 +16,11 @@ const quoteTotal = () => Math.round(state.products.reduce((sum, p, i) => sum + p
 const space = () => ui.page === 'home' ? ui.homeSpace : NAV.trade.some(n => n[0] === ui.page) ? 'trade' : 'acquire';
 const timeNow = () => new Intl.DateTimeFormat('zh-CN', {timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit'}).format(new Date());
 function formatDate(value) { return value ? h(value.replace('T', ' ').replace(/^2026-/, '')) : '未安排'; }
+function tomorrowAt(hour, minute = 0, now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(now).map(x => [x.type, x.value]));
+  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + 1)).toISOString().slice(0, 10);
+  return `${date}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
 
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); storageFailed = false; }
@@ -77,10 +82,11 @@ function commit() { save(); render(); }
 function invalidateDraft(productId) {
   if (state.draft.productId === productId) state.draft.approvedVersion = null;
 }
-function updateDraft(title, body) {
-  const p = state.products.find(x => x.id === state.draft.productId) || currentProduct();
+function updateDraft(title, body, source = null) {
+  if (source && !state.products.some(p => p.id === source.id && p.version === source.version)) throw Error('引用产品版本已变化，请重新检查后生成或保存。');
   const before = structuredClone(state.draft);
-  state.draft = {...state.draft, title, body, version: state.draft.version + 1, productVersion: p.version, approvedVersion: null};
+  state.draft = {...state.draft, title, body, version: state.draft.version + 1, approvedVersion: null,
+    ...(source ? {productId: source.id, productVersion: source.version} : {})};
   audit('更新内容版本', `内容 v${state.draft.version}；旧发布审批失效`, {kind: 'draft', before, expectedVersion: state.draft.version});
 }
 function reviseQuote() {
@@ -122,7 +128,7 @@ function applyOperation(page, op) {
     message(page, 'receipt', `已修改 ${c.name} 的 ${Object.keys(op.patch).map(k => ({tag: '意向标签', followup: '跟进时间', note: '备注', need: '需求摘要', port: '目的港'}[k])).join('、')}。\n客户版本 v${c.version}；可在操作记录中撤销。`);
   } else if (op.kind === 'draft') {
     if (state.draft.version !== op.version) throw Error('内容版本已变化，请重新生成。');
-    updateDraft(op.title, op.body);
+    updateDraft(op.title, op.body, {id: op.productId, version: op.productVersion});
     message(page, 'receipt', `已生成英文内容 v${state.draft.version} 并更新左侧编辑器。\n演示稿不含价格、交期和认证承诺，需人工复核。`);
   } else if (op.kind === 'market') {
     if (state.market.version !== op.version) throw Error('市场分析已变化，请重新生成。');
@@ -145,8 +151,7 @@ function handoff(from, to, text) {
 }
 function productHandoff() {
   const p = currentProduct();
-  state.draft.productId = p.id;
-  state.draft.approvedVersion = null;
+  state.designProductId = p.id;
   handoff('product', 'design', `产品 ${p.id} / 分析 v${p.version}\n定位：${p.positioning}\n卖点：${p.advantages}\n只交接资料，不自动覆盖已有内容。`);
 }
 function serviceSummary() {
@@ -182,8 +187,8 @@ function runAgent(page, text) {
   } else if (page === 'design' && /发布|交接/.test(text)) {
     handoff('design', 'publish', `内容 v${state.draft.version}：${state.draft.title}\n提交人工发布审批，不执行自动发布。`);
   } else if (page === 'design' && /生成|改写|英文/.test(text)) {
-    const p = state.products.find(x => x.id === state.draft.productId) || currentProduct();
-    propose(page, {kind: 'draft', version: state.draft.version, title: p.name + ' · 项目选型介绍', body: draftBody(p)}, '根据已确认产品资料生成英文演示稿，并建立新版本。');
+    const p = state.products.find(x => x.id === state.designProductId) || currentProduct();
+    propose(page, {kind: 'draft', version: state.draft.version, productId: p.id, productVersion: p.version, title: p.name + ' · 项目选型介绍', body: draftBody(p)}, '根据已确认产品资料生成英文演示稿，并建立新版本。');
   } else if (page === 'customers' && /客服|摘要/.test(text)) {
     if (currentCustomer().id !== 'C-0187') message(page, 'agent', '当前客户暂无关联的示例客服摘要。请选择 KL Build Supply 后使用此演示。');
     else serviceSummary();
@@ -191,7 +196,14 @@ function runAgent(page, text) {
     const c = currentCustomer();
     propose(page, {kind: 'customer', id: c.id, version: c.version, patch: {tag: '高意向'}}, `将 ${c.name} 标记为高意向。`);
   } else if (page === 'customers' && /跟进/.test(text)) {
-    const c = currentCustomer(), followup = /15|下午/.test(text) ? '2026-11-08T15:00' : '2026-11-08T10:00';
+    const c = currentCustomer();
+    if (!/明天/.test(text)) { message(page, 'agent', '请明确“明天几点”，或直接在客户资料中选择完整日期时间。不会把其他日期默认为明天。'); return; }
+    const match = text.match(/(上午|下午|晚上)?\s*(\d{1,2})(?:[:：](\d{2})|点|时)/);
+    let hour = match ? Number(match[2]) : 10;
+    if (match && /下午|晚上/.test(match[1]) && hour < 12) hour += 12;
+    const minute = match?.[3] ? Number(match[3]) : 0;
+    if (hour > 23 || minute > 59) { message(page, 'agent', '时间超出范围，请填写 0–23 点和 0–59 分。'); return; }
+    const followup = tomorrowAt(hour, minute);
     propose(page, {kind: 'customer', id: c.id, version: c.version, patch: {followup}}, `修改 ${c.name} 的演示跟进时间为 ${followup.replace('T', ' ')}；不会创建系统提醒。`);
   } else if (page === 'customers' && /备注[：:]/.test(text)) {
     const c = currentCustomer(), note = text.split(/备注[：:]/).slice(1).join('：').trim().slice(0, 500);
@@ -219,6 +231,7 @@ function undoChange(id) {
     if (change.kind === 'product') invalidateDraft(entity.id);
   } else if (change.kind === 'draft') {
     if (state.draft.version !== change.expectedVersion) throw Error('内容已有后续版本，不能直接撤销。');
+    if (state.publicationHistory.some(x => x.version === state.draft.version)) throw Error('当前版本已有发布记录，不能用内部撤销代替对外发布纠正。');
     const version = state.draft.version + 1;
     state.draft = {...change.before, version, approvedVersion: null};
   }
@@ -249,7 +262,8 @@ function action(name) {
     d.approvedVersion = d.version; audit('人工批准内容', `内容 v${d.version}；未自动发布`); message('publish', 'receipt', `内容 v${d.version} 已由人批准。请在企业主页人工发布后登记链接。`); commit(); return;
   }
   if (name === 'copy-draft') {
-    navigator.clipboard?.writeText(state.draft.body).then(() => toast('文案已复制。')).catch(() => toast('复制权限不可用，请手动选择文案。')); return;
+    if (!navigator.clipboard?.writeText) { toast('浏览器不支持复制，请手动选择文案。'); return; }
+    navigator.clipboard.writeText(state.draft.body).then(() => toast('文案已复制。')).catch(() => toast('复制权限不可用，请手动选择文案。')); return;
   }
   if (name === 'add-customer' || name === 'edit-customer') {
     const edit = name === 'edit-customer', c = edit ? currentCustomer() : {name: '', person: '', country: '马来西亚', port: '', type: '项目客户', tag: '待了解', followup: '', need: '', note: ''};
@@ -324,7 +338,7 @@ function action(name) {
   if (name === 'chat-back') { ui.chatRoomOpen = false; render(); return; }
   if (name === 'chat-summary') {
     const c = state.chats.find(x => x.id === state.chatId);
-    if (!['service', 'kl', 'project'].includes(c.id)) { toast('此会话暂无结构化需求，演示不会编造摘要。'); return; }
+    if (!['service', 'kl'].includes(c.id)) { toast('此会话暂无完整数量与目的港，不能把其他会话的摘要写入客户档案。'); return; }
     serviceSummary();
     if (c.id !== 'service') c.messages.push({who: 'agent', name: '客服 Agent', text: '已提取预置示例中的数量与目的港，内部同步给客户管理 Agent。没有向外部发送消息。', time: timeNow()});
     commit(); toast('需求已内部交接，可在客户管理查看。'); return;
@@ -355,14 +369,21 @@ function handleForm(form) {
     p.positioning = f.get('positioning').trim(); p.advantages = f.get('advantages').trim(); p.version++;
     invalidateDraft(p.id); audit('人工保存产品分析', `${p.id} / v${p.version}`, {kind: 'product', id: p.id, before, expectedVersion: p.version});
   } else if (kind === 'draft') {
-    updateDraft(f.get('title').trim(), f.get('body').trim());
+    const p = state.products.find(x => x.id === state.draft.productId);
+    const stale = p?.version !== state.draft.productVersion;
+    if (stale && Number(f.get('review_product_version')) !== p?.version) throw Error('引用产品已变化，请先勾选确认已核对当前产品事实。');
+    updateDraft(f.get('title').trim(), f.get('body').trim(), stale ? {id: p.id, version: p.version} : null);
   } else if (kind === 'publication') {
     const d = state.draft;
     if (d.approvedVersion !== d.version) throw Error('内容变更后需要重新批准。');
     let url;
     try { url = new URL(f.get('url')); } catch { throw Error('请输入有效链接。'); }
     if (url.protocol !== 'https:' || !['facebook.com', 'www.facebook.com', 'm.facebook.com', 'fb.watch'].includes(url.hostname) || url.pathname === '/') throw Error('请输入 HTTPS Facebook 帖子链接。');
+    const previous = state.publicationHistory.find(x => x.version === d.version);
+    if (previous && previous.url !== url.href) throw Error('当前版已登记其他链接，不能覆盖历史发布记录。');
+    if (previous) { toast('该链接已登记，未重复新增发布记录。'); return; }
     d.publication = {url: url.href, version: d.version, time: timeNow()};
+    state.publicationHistory.push({...d.publication});
     audit('登记人工发布', `内容 v${d.version} / ${url.href} / 未核验平台状态`);
   } else if (kind === 'agent') {
     const text = f.get('message').trim(); if (!text) return;
